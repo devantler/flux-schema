@@ -281,15 +281,25 @@ resolve_config() {
 
 # Export the variables from the dotenv file so that they are visible to
 # 'flux envsubst', mirroring Flux post-build variable substitution.
+# Values are taken literally and are never evaluated by the shell.
 load_envsubst() {
   if [[ -z "$envsubst_file" ]]; then
     return 0
   fi
   echo "INFO - Using envsubst variables from: $envsubst_file"
-  set -o allexport
-  # shellcheck disable=SC1090
-  source "$envsubst_file"
-  set +o allexport
+  local line line_number=0
+  while read -r line || [[ -n "$line" ]]; do
+    line_number=$((line_number + 1))
+    if [[ -z "$line" || "$line" == \#* ]]; then
+      continue
+    fi
+    if [[ ! "$line" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; then
+      echo "ERROR - invalid variable at line $line_number in: $envsubst_file" >&2
+      exit 1
+    fi
+    # shellcheck disable=SC2163
+    export "$line"
+  done < "$envsubst_file"
   envsubst_tmp_dir="$(mktemp -d)"
   trap 'rm -rf "$envsubst_tmp_dir"' EXIT
 }

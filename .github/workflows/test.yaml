@@ -60,7 +60,10 @@ jobs:
           resources:
             - ../ingress.yaml
           EOF
-          echo "CLUSTER_DOMAIN=example.com" > "${RUNNER_TEMP}/flux.env"
+          cat << 'EOF' > "${RUNNER_TEMP}/flux.env"
+          CLUSTER_DOMAIN=example.com
+          NOT_EXECUTED=$(touch "${RUNNER_TEMP}/executed")
+          EOF
           if ./actions/validate/validate.sh -d "${RUNNER_TEMP}/envsubst-test" -- \
             --schema-location ./catalog/latest; then
             echo "expected validation to fail without --envsubst"
@@ -68,6 +71,10 @@ jobs:
           fi
           ./actions/validate/validate.sh -d "${RUNNER_TEMP}/envsubst-test" \
             -E "${RUNNER_TEMP}/flux.env" -- --schema-location ./catalog/latest
+          if [[ -f "${RUNNER_TEMP}/executed" ]]; then
+            echo "expected the envsubst file values to be taken literally"
+            exit 1
+          fi
       - name: Build Docker image
         run: make docker-build
       - name: Run Docker smoke test

@@ -122,6 +122,10 @@ CLUSTER_DOMAIN=example.com
 CLUSTER_REGION=eu-central-1
 ```
 
+Each line is read as `NAME=value` and the value is used as written,
+without shell quoting or expansion. Blank lines and lines starting
+with `#` are ignored.
+
 Variables that are not set are replaced with empty strings.
 It is recommended to specify all used vars in the dotenv file or
 define default values in the manifests e.g. `${CLUSTER_DOMAIN:=example.com}`.
