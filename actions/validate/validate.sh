@@ -58,6 +58,26 @@ set -o pipefail
 # track validation and build failures
 errors=0
 
+# Read each traversal in the parent shell so a failed or partial scan cannot
+# disappear behind a process substitution. The temporary file preserves NUL
+# delimiters and is reused only after its preceding scan has been consumed.
+scan_file=""
+
+scan_paths() {
+  local status=0
+  find "$@" >"$scan_file" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    errors=$((errors + 1))
+    echo "ERROR - Directory scan failed with exit status $status" >&2
+  fi
+}
+
+cleanup_scan() {
+  local status=$?
+  rm -f "$scan_file"
+  exit "$status"
+}
+
 # running tally of resources across every flux-schema invocation, parsed
 # in-memory from each run's "Summary:" line.
 # summaries_parsed stays 0 when output is non-text (e.g. a '--' or config
@@ -427,18 +447,21 @@ is_non_kustomize_excluded_dir() {
 
 # Detect directories containing Terraform files, Helm charts, or kustomize overlays
 detect_excluded_dirs() {
+  scan_paths "$root_dir" -mindepth 1 -name '.*' -prune -o -type f -name '*.tf' -print0
   while IFS= read -r -d $'\0' file; do
     auto_skip_dirs+=("$(dirname "$file")")
-  done < <(find "$root_dir" -mindepth 1 -name '.*' -prune -o -type f -name '*.tf' -print0)
+  done <"$scan_file"
 
+  scan_paths "$root_dir" -mindepth 1 -name '.*' -prune -o -type f -name "$helm_config" -print0
   while IFS= read -r -d $'\0' file; do
     auto_skip_dirs+=("$(dirname "$file")")
     helm_chart_dirs+=("$(dirname "$file")")
-  done < <(find "$root_dir" -mindepth 1 -name '.*' -prune -o -type f -name "$helm_config" -print0)
+  done <"$scan_file"
 
+  scan_paths "$root_dir" -mindepth 1 -name '.*' -prune -o -type f "${kustomize_config[@]}" -print0
   while IFS= read -r -d $'\0' file; do
     kustomize_dirs+=("$(dirname "$file")")
-  done < <(find "$root_dir" -mindepth 1 -name '.*' -prune -o -type f "${kustomize_config[@]}" -print0)
+  done <"$scan_file"
 }
 
 # Collect the kustomize bases and components found by 'flux-schema discover'
@@ -490,6 +513,7 @@ accumulate_summary() {
 validate_kubernetes_manifests() {
   echo "INFO - Validating Kubernetes manifests"
   local files=() output dir build_output
+  scan_paths "$root_dir" -mindepth 1 -name '.*' -prune -o -type f \( -name '*.yaml' -o -name '*.yml' \) -print0
   while IFS= read -r -d $'\0' file; do
     dir="$(dirname "$file")"
     if is_excluded_dir "$dir"; then
@@ -499,7 +523,7 @@ validate_kubernetes_manifests() {
       continue
     fi
     files+=("$file")
-  done < <(find "$root_dir" -mindepth 1 -name '.*' -prune -o -type f \( -name '*.yaml' -o -name '*.yml' \) -print0)
+  done <"$scan_file"
   if [[ ${#files[@]} -gt 0 ]]; then
     if [[ -n "$bundle_file" ]]; then
       for file in "${files[@]}"; do
@@ -530,6 +554,7 @@ validate_kubernetes_manifests() {
 
 validate_kustomize_overlays() {
   local overlay build_output output dir
+  scan_paths "$root_dir" -mindepth 1 -name '.*' -prune -o -type f "${kustomize_config[@]}" -print0
   while IFS= read -r -d $'\0' file; do
     dir="$(dirname "$file")"
     if is_non_kustomize_excluded_dir "$dir"; then
@@ -555,7 +580,7 @@ validate_kustomize_overlays() {
         sed '1d' <<< "$build_output" | bundle_append "kustomize-overlay: $(rel_path "$overlay")"
       fi
     fi
-  done < <(find "$root_dir" -mindepth 1 -name '.*' -prune -o -type f "${kustomize_config[@]}" -print0)
+  done <"$scan_file"
 }
 
 validate_helm_charts() {
@@ -616,6 +641,8 @@ resolve_flux_schema
 resolve_config
 resolve_envsubst
 init_bundle
+scan_file="$(mktemp)"
+trap cleanup_scan EXIT
 detect_excluded_dirs
 detect_kustomize_refs
 validate_kubernetes_manifests

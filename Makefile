@@ -39,8 +39,12 @@ tidy: ## Run go mod tidy.
 	go mod tidy
 
 .PHONY: test
-test: tidy fmt generate vet ## Run all unit tests.
+test: tidy fmt generate vet test-validate-action ## Run all unit tests.
 	go test ./... $(GO_TEST_ARGS) -coverprofile cover.out
+
+.PHONY: test-validate-action
+test-validate-action: ## Test the validation action's directory scans.
+	bash actions/validate/validate.test.sh
 
 .PHONY: lint
 lint: golangci-lint ## Run golangci linters.
